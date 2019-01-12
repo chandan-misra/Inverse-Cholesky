@@ -428,7 +428,7 @@ public class BlockLDLT implements Serializable{
 				sum = A[j][i];
 
 				for (int k = 0; k < i; k++) {
-					sum = sum - ((L[j][k] * L[i][k]) / D[k][k]);
+					sum = sum - ((L[j][k] * L[i][k]) * D[k][k]);
 				}
 
 				L[j][i] = sum / D[i][i];
