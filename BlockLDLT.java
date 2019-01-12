@@ -26,7 +26,7 @@ import org.jblas.Solve;
 
 import scala.Tuple2;
 
-public class BlockLDLT implements Serializable{
+public class BlockLDLT implements Serializable {
 
 	/**
 	 * Breaks the matrix of type [[BlockMatrix]] into four equal sized sub-matrices.
@@ -324,7 +324,9 @@ public class BlockLDLT implements Serializable{
 		return mat;
 	}
 
-	public Tuple2<BlockMatrix, BlockMatrix> blockLDLT(JavaSparkContext sc, BlockMatrix A, int size, int blockSize) {
+	public List<Tuple2<BlockMatrix, BlockMatrix>> blockLDLT(JavaSparkContext sc, BlockMatrix A, int size,
+			int blockSize) {
+		List<Tuple2<BlockMatrix, BlockMatrix>> listTuple = new ArrayList<Tuple2<BlockMatrix, BlockMatrix>>();
 		if (size == 1) {
 
 			List<Tuple2<Tuple2<Object, Object>, Matrix>> list = new ArrayList<Tuple2<Tuple2<Object, Object>, Matrix>>();
@@ -345,13 +347,26 @@ public class BlockLDLT implements Serializable{
 			Tuple2<double[][], double[][]> LD = serialLDL(a, blockSize);
 			double[][] L = LD._1;
 			double[][] D = LD._2;
-			double[] lArray = new double[blockSize*blockSize];
-			double[] dArray = new double[blockSize*blockSize];
+			double[] lArray = new double[blockSize * blockSize];
+			double[] dArray = new double[blockSize * blockSize];
 
 			lArray = toSingleArray(L);
-			System.out.println(Arrays.toString(lArray));
 			dArray = toSingleArray(D);
-			
+
+			Matrix LMatrix = Matrices.dense(matrix.numRows(), matrix.numCols(), lArray);
+			Matrix DMatrix = Matrices.dense(matrix.numRows(), matrix.numCols(), dArray);
+
+			List<Tuple2<Tuple2<Object, Object>, Matrix>> LList = new ArrayList<Tuple2<Tuple2<Object, Object>, Matrix>>();
+			List<Tuple2<Tuple2<Object, Object>, Matrix>> DList = new ArrayList<Tuple2<Tuple2<Object, Object>, Matrix>>();
+			LList.add(new Tuple2(new Tuple2(rowIndex, colIndex), LMatrix));
+			DList.add(new Tuple2(new Tuple2(rowIndex, colIndex), DMatrix));
+			RDD<Tuple2<Tuple2<Object, Object>, Matrix>> LRDD = sc.parallelize(LList).rdd();
+			RDD<Tuple2<Tuple2<Object, Object>, Matrix>> DRDD = sc.parallelize(DList).rdd();
+			BlockMatrix LMat = new BlockMatrix(LRDD, blockSize, blockSize);
+			BlockMatrix DMat = new BlockMatrix(DRDD, blockSize, blockSize);
+
+			listTuple.add(new Tuple2(LMat, DMat));
+
 			DoubleMatrix lInverse = Solve.pinv(new DoubleMatrix(blockSize, blockSize, lArray));
 			double[] dInverse = diagInverse(dArray);
 
@@ -365,11 +380,11 @@ public class BlockLDLT implements Serializable{
 			RDD<Tuple2<Tuple2<Object, Object>, Matrix>> LInvRDD = sc.parallelize(LInvList).rdd();
 			RDD<Tuple2<Tuple2<Object, Object>, Matrix>> DInvRDD = sc.parallelize(DInvList).rdd();
 			BlockMatrix LInv = new BlockMatrix(LInvRDD, blockSize, blockSize);
-			print(LInv);
 			BlockMatrix DInv = new BlockMatrix(DInvRDD, blockSize, blockSize);
-			print(DInv);
 
-			return new Tuple2(LInv, DInv);
+			listTuple.add(new Tuple2(LInv, DInv));
+
+			return listTuple;
 		} else {
 
 			size = size / 2;
@@ -379,9 +394,25 @@ public class BlockLDLT implements Serializable{
 			BlockMatrix A21 = BlockLDLT._21(pairRDD, sc, blockSize);
 			BlockMatrix A22 = BlockLDLT._22(pairRDD, sc, blockSize);
 
-			Tuple2<BlockMatrix, BlockMatrix> ldlt = blockLDLT(sc, A11, size, blockSize);
-			//BlockMatrix L = ldlt._1;
-			//BlockMatrix D = ldlt._2;
+			List<Tuple2<BlockMatrix, BlockMatrix>> ldlt = blockLDLT(sc, A11, size, blockSize);
+			BlockMatrix L11 = ldlt.get(0)._1;
+			BlockMatrix D11 = ldlt.get(1)._2;
+			BlockMatrix L11Inv = ldlt.get(1)._1;
+			BlockMatrix D11Inv = ldlt.get(1)._2;
+			BlockMatrix I = L11Inv.transpose();
+			print(I);
+			BlockMatrix II = A21.multiply(I);
+			print(II);
+			BlockMatrix III = II.multiply(D11Inv);
+			print(III);
+			BlockMatrix IV = II.transpose();
+			print(IV);
+			BlockMatrix V = III.multiply(D11);
+			print(V);
+			BlockMatrix VI = V.multiply(IV);
+			print(VI);
+			BlockMatrix VII = A22.subtract(VI);
+			print(VII);
 
 			return ldlt;
 
@@ -437,7 +468,7 @@ public class BlockLDLT implements Serializable{
 		return new Tuple2<double[][], double[][]>(L, D);
 
 	}
-	
+
 	public BlockMatrix getSquareMatrix(JavaSparkContext sc, String path) {
 		JavaRDD<String> lines = sc.textFile(path);
 		JavaRDD<MatrixEntry> mat = lines.map(new Function<String, MatrixEntry>() {
@@ -456,27 +487,27 @@ public class BlockLDLT implements Serializable{
 		BlockMatrix matrix = coordinateMatrix.toBlockMatrix(2, 2);
 		return matrix;
 	}
-	
+
 	public static void main(String args[]) {
 
 		BlockLDLT blockLDLT = new BlockLDLT();
 		SparkConf conf = new SparkConf();
 		JavaSparkContext sc = new JavaSparkContext(conf);
-		
+
 		String fileName = args[0];
 		String path = "E:\\PenDrive\\BlockLDLT\\" + fileName + ".csv";
 		int size = Integer.parseInt(args[1]);
 		int blockSize = Integer.parseInt(args[2]);
-		
-		int partitionSize = size/blockSize;
+
+		int partitionSize = size / blockSize;
 		BlockMatrix mat = blockLDLT.getSquareMatrix(sc, path);
 		mat.blocks().cache();
 		mat.blocks().count();
 		long start = System.currentTimeMillis();
-		Tuple2<BlockMatrix,BlockMatrix> LDInverse = blockLDLT.blockLDLT(sc, mat, partitionSize, blockSize);		
+		Tuple2<BlockMatrix, BlockMatrix> LDInverse = blockLDLT.blockLDLT(sc, mat, partitionSize, blockSize);
 		LDInverse._1.blocks().count();
 		long end = System.currentTimeMillis();
-		System.out.println((end-start)/1000+" sec.");
+		System.out.println((end - start) / 1000 + " sec.");
 		sc.close();
 	}
 
