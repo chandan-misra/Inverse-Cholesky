@@ -261,6 +261,30 @@ public class BlockLDLT implements Serializable {
 		BlockMatrix C = new BlockMatrix(union.rdd(), blockSize, blockSize);
 		return C;
 	}
+	
+	private static BlockMatrix reArrange(JavaSparkContext ctx, BlockMatrix C11, BlockMatrix C22,
+			int size, int blockSize) {
+		final Broadcast<Integer> bSize = ctx.broadcast(size);
+		JavaRDD<Tuple2<Tuple2<Object, Object>, Matrix>> C11_RDD = C11.blocks().toJavaRDD();
+		JavaRDD<Tuple2<Tuple2<Object, Object>, Matrix>> C22_RDD = C22.blocks().toJavaRDD();
+		JavaRDD<Tuple2<Tuple2<Object, Object>, Matrix>> C22Arranged = C22_RDD
+				.map(new Function<Tuple2<Tuple2<Object, Object>, Matrix>, Tuple2<Tuple2<Object, Object>, Matrix>>() {
+
+					@Override
+					public Tuple2<Tuple2<Object, Object>, Matrix> call(Tuple2<Tuple2<Object, Object>, Matrix> tuple)
+							throws Exception {
+						int size = bSize.getValue();
+						int rowIndex = tuple._1._1$mcI$sp() + size;
+						int colIndex = tuple._1._2$mcI$sp() + size;
+						Matrix matrix = tuple._2;
+						return new Tuple2(new Tuple2(rowIndex, colIndex), matrix);
+					}
+				});
+
+		JavaRDD<Tuple2<Tuple2<Object, Object>, Matrix>> union = C11_RDD.union(C22Arranged);
+		BlockMatrix C = new BlockMatrix(union.rdd(), blockSize, blockSize);
+		return C;
+	}
 
 	private static BlockMatrix scalerMul(JavaSparkContext ctx, BlockMatrix A, final double scalar, int blockSize) {
 		final Broadcast<Integer> bblockSize = ctx.broadcast(blockSize);
@@ -326,9 +350,9 @@ public class BlockLDLT implements Serializable {
 
 	public List<Tuple2<BlockMatrix, BlockMatrix>> blockLDLT(JavaSparkContext sc, BlockMatrix A, int size,
 			int blockSize) {
-		List<Tuple2<BlockMatrix, BlockMatrix>> listTuple = new ArrayList<Tuple2<BlockMatrix, BlockMatrix>>();
+		
 		if (size == 1) {
-
+			List<Tuple2<BlockMatrix, BlockMatrix>> listTuple = new ArrayList<Tuple2<BlockMatrix, BlockMatrix>>();
 			List<Tuple2<Tuple2<Object, Object>, Matrix>> list = new ArrayList<Tuple2<Tuple2<Object, Object>, Matrix>>();
 			list = A.blocks().toJavaRDD().collect();
 
@@ -386,7 +410,7 @@ public class BlockLDLT implements Serializable {
 
 			return listTuple;
 		} else {
-
+			List<Tuple2<BlockMatrix, BlockMatrix>> listTuple = new ArrayList<Tuple2<BlockMatrix, BlockMatrix>>();
 			size = size / 2;
 			JavaPairRDD<String, Tuple2<Tuple2<Object, Object>, Matrix>> pairRDD = BlockLDLT.breakMat(A, sc, size);
 			BlockMatrix A11 = BlockLDLT._11(pairRDD, sc, blockSize);
@@ -394,11 +418,11 @@ public class BlockLDLT implements Serializable {
 			BlockMatrix A21 = BlockLDLT._21(pairRDD, sc, blockSize);
 			BlockMatrix A22 = BlockLDLT._22(pairRDD, sc, blockSize);
 
-			List<Tuple2<BlockMatrix, BlockMatrix>> ldlt = blockLDLT(sc, A11, size, blockSize);
-			BlockMatrix L11 = ldlt.get(0)._1;
-			BlockMatrix D11 = ldlt.get(1)._2;
-			BlockMatrix L11Inv = ldlt.get(1)._1;
-			BlockMatrix D11Inv = ldlt.get(1)._2;
+			List<Tuple2<BlockMatrix, BlockMatrix>> ldlt1 = blockLDLT(sc, A11, size, blockSize);
+			BlockMatrix L11 = ldlt1.get(0)._1;
+			BlockMatrix D11 = ldlt1.get(1)._2;
+			BlockMatrix L11Inv = ldlt1.get(1)._1;
+			BlockMatrix D11Inv = ldlt1.get(1)._2;
 			BlockMatrix I = L11Inv.transpose();
 			print(I);
 			BlockMatrix II = A21.multiply(I);
@@ -413,8 +437,27 @@ public class BlockLDLT implements Serializable {
 			print(VI);
 			BlockMatrix VII = A22.subtract(VI);
 			print(VII);
-
-			return ldlt;
+			List<Tuple2<BlockMatrix, BlockMatrix>> ldlt2 = blockLDLT(sc, A11, size, blockSize);
+			BlockMatrix L22 = ldlt1.get(0)._1;
+			print(L22);
+			BlockMatrix D22 = ldlt1.get(1)._2;
+			print(D22);
+			BlockMatrix L22Inv = ldlt1.get(1)._1;
+			print(L22Inv);
+			BlockMatrix D22Inv = ldlt1.get(1)._2;
+			print(D22Inv);
+			
+			BlockMatrix VIII = L22Inv.multiply(III);
+			print(VIII);
+			BlockMatrix IX = VIII.multiply(L11Inv);
+			print(IX);
+			BlockMatrix X = scalerMul(sc, IX, -1, blockSize);
+			print(X);
+			
+			BlockMatrix LInv = reArrange(sc, L11Inv, X, L22Inv, size, blockSize);
+			BlockMatrix DInv = reArrange(sc,D11Inv,D22Inv,size,blockSize);
+			listTuple.add(new Tuple2(LInv, DInv));
+			return listTuple;
 
 		}
 
@@ -489,7 +532,7 @@ public class BlockLDLT implements Serializable {
 	}
 
 	public static void main(String args[]) {
-
+		List<Tuple2<BlockMatrix, BlockMatrix>> listTuple = new ArrayList<Tuple2<BlockMatrix, BlockMatrix>>();
 		BlockLDLT blockLDLT = new BlockLDLT();
 		SparkConf conf = new SparkConf();
 		JavaSparkContext sc = new JavaSparkContext(conf);
@@ -504,8 +547,8 @@ public class BlockLDLT implements Serializable {
 		mat.blocks().cache();
 		mat.blocks().count();
 		long start = System.currentTimeMillis();
-		Tuple2<BlockMatrix, BlockMatrix> LDInverse = blockLDLT.blockLDLT(sc, mat, partitionSize, blockSize);
-		LDInverse._1.blocks().count();
+		listTuple = blockLDLT.blockLDLT(sc, mat, partitionSize, blockSize);
+		listTuple.get(0)._1.blocks().count();
 		long end = System.currentTimeMillis();
 		System.out.println((end - start) / 1000 + " sec.");
 		sc.close();
