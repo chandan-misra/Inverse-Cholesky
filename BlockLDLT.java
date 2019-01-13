@@ -261,9 +261,9 @@ public class BlockLDLT implements Serializable {
 		BlockMatrix C = new BlockMatrix(union.rdd(), blockSize, blockSize);
 		return C;
 	}
-	
-	private static BlockMatrix reArrange(JavaSparkContext ctx, BlockMatrix C11, BlockMatrix C22,
-			int size, int blockSize) {
+
+	private static BlockMatrix reArrange(JavaSparkContext ctx, BlockMatrix C11, BlockMatrix C22, int size,
+			int blockSize) {
 		final Broadcast<Integer> bSize = ctx.broadcast(size);
 		JavaRDD<Tuple2<Tuple2<Object, Object>, Matrix>> C11_RDD = C11.blocks().toJavaRDD();
 		JavaRDD<Tuple2<Tuple2<Object, Object>, Matrix>> C22_RDD = C22.blocks().toJavaRDD();
@@ -350,7 +350,7 @@ public class BlockLDLT implements Serializable {
 
 	public List<Tuple2<BlockMatrix, BlockMatrix>> blockLDLT(JavaSparkContext sc, BlockMatrix A, int size,
 			int blockSize) {
-		
+
 		if (size == 1) {
 			List<Tuple2<BlockMatrix, BlockMatrix>> listTuple = new ArrayList<Tuple2<BlockMatrix, BlockMatrix>>();
 			List<Tuple2<Tuple2<Object, Object>, Matrix>> list = new ArrayList<Tuple2<Tuple2<Object, Object>, Matrix>>();
@@ -438,24 +438,24 @@ public class BlockLDLT implements Serializable {
 			BlockMatrix VII = A22.subtract(VI);
 			print(VII);
 			List<Tuple2<BlockMatrix, BlockMatrix>> ldlt2 = blockLDLT(sc, A11, size, blockSize);
-			BlockMatrix L22 = ldlt1.get(0)._1;
+			BlockMatrix L22 = ldlt2.get(0)._1;
 			print(L22);
-			BlockMatrix D22 = ldlt1.get(1)._2;
+			BlockMatrix D22 = ldlt2.get(1)._2;
 			print(D22);
 			BlockMatrix L22Inv = ldlt1.get(1)._1;
 			print(L22Inv);
 			BlockMatrix D22Inv = ldlt1.get(1)._2;
 			print(D22Inv);
-			
+
 			BlockMatrix VIII = L22Inv.multiply(III);
 			print(VIII);
 			BlockMatrix IX = VIII.multiply(L11Inv);
 			print(IX);
 			BlockMatrix X = scalerMul(sc, IX, -1, blockSize);
 			print(X);
-			
+
 			BlockMatrix LInv = reArrange(sc, L11Inv, X, L22Inv, size, blockSize);
-			BlockMatrix DInv = reArrange(sc,D11Inv,D22Inv,size,blockSize);
+			BlockMatrix DInv = reArrange(sc, D11Inv, D22Inv, size, blockSize);
 			listTuple.add(new Tuple2(LInv, DInv));
 			return listTuple;
 
